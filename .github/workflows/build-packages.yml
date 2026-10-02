@@ -33,9 +33,12 @@ jobs:
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}
+          # ВАЖНО: у репозитория remittor/zapret-openwrt ветка по умолчанию = zap1,
+          # поэтому указываем её через ";zap1" в конце URL.
           EXTRA_FEEDS: >-
-            src-git zapret https://github.com/remittor/zapret-openwrt.git
-          PACKAGES: zapret
+            src-git zapret https://github.com/remittor/zapret-openwrt.git;zap1
+          # Собираем оба пакета из фида
+          PACKAGES: zapret luci-app-zapret
           INDEX: 1
           IGNORE_ERRORS: 1
 
