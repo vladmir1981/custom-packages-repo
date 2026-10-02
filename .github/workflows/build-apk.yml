@@ -1,4 +1,4 @@
-name: Build APK Packages (snapshot / 25.12+)
+name: Build APK Packages (snapshot)
 
 on:
   workflow_dispatch:
@@ -35,12 +35,12 @@ jobs:
         with:
           fetch-depth: 0
 
-            - name: Build APK via gh-action-sdk
+      - name: Build APK via gh-action-sdk
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}
           EXTRA_FEEDS: |
-            src-git zapret https://github.com/remittor/zapret-openwrt.git
+            src-git zapret https://github.com/vladmir1981/zapret-openwrt.git
           PACKAGES: "zapret luci-app-zapret"
           INDEX: 1
           IGNORE_ERRORS: 1
@@ -48,9 +48,7 @@ jobs:
       - name: Collect built packages
         if: always()
         run: |
-          echo "=== Поиск .apk ==="
           find bin -name "*.apk" -print || true
-          echo "=== Поиск .ipk ==="
           find bin -name "*.ipk" -print || true
 
       - name: Publish APK packages
@@ -60,27 +58,17 @@ jobs:
         run: |
           set -e
           mkdir -p "$OUT_DIR"
-          APK_FILES=$(find bin -name "*.apk" -type f || true)
-          INDEX_FILES=$(find bin -name "Packages*" -type f || true)
-          APKINDEX_FILES=$(find bin -name "APKINDEX*" -type f || true)
-          if [ -z "$APK_FILES" ] && [ -z "$INDEX_FILES" ] && [ -z "$APKINDEX_FILES" ]; then
-            echo "⚠ Ни одного пакета/индекса не найдено."
+          FILES=$(find bin -name "*.apk" -type f 2>/dev/null || true)
+          if [ -z "$FILES" ]; then
+            echo "no apk files"
             exit 0
           fi
-          while IFS= read -r f; do
+          echo "$FILES" | while IFS= read -r f; do
             [ -z "$f" ] && continue
             cp -v "$f" "$OUT_DIR"/
-          done <<< "$APK_FILES"
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$INDEX_FILES"
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$APKINDEX_FILES"
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$OUT_DIR"/*
-          git commit -m "auto: rebuild $OUT_DIR packages" || echo "Нет изменений"
-          git push origin main || echo "Нечего пушить"
+          git commit -m "auto: rebuild $OUT_DIR packages" || echo "no changes"
+          git push origin main || echo "nothing to push"
