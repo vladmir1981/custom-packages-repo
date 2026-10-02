@@ -1,0 +1,132 @@
+name: Build IPK Packages (23.05 / 24.10)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.ipk'
+      - '**/*.apk'
+      - '**/Packages*'
+      - 'README.md'
+      - 'manifest.json'
+      - 'arch_map.json'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "24.10.5"
+            arch: aarch64_cortex-a53
+            out_dir: 24.10/aarch64_cortex-a53
+          - version: "24.10.5"
+            arch: mipsel_24kc
+            out_dir: 24.10/mipsel_24kc
+          - version: "24.10.5"
+            arch: mips_24kc
+            out_dir: 24.10/mips_24kc
+          - version: "23.05.5"
+            arch: aarch64_cortex-a53
+            out_dir: 23.05/aarch64_cortex-a53
+          - version: "23.05.5"
+            arch: mipsel_24kc
+            out_dir: 23.05/mipsel_24kc
+          - version: "23.05.5"
+            arch: mips_24kc
+            out_dir: 23.05/mips_24kc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull SDK docker image
+        run: |
+          set -e
+          IMG1="ghcr.io/openwrt/sdk:${ARCH}-${VER}"
+          IMG2="ghcr.io/openwrt/sdk:${ARCH}-v${VER}"
+          echo "Пробуем: $IMG1"
+          if docker pull "$IMG1"; then
+            echo "SDK_IMAGE=$IMG1" >> $GITHUB_ENV
+          else
+            echo "Не вышло, пробуем: $IMG2"
+            docker pull "$IMG2"
+            echo "SDK_IMAGE=$IMG2" >> $GITHUB_ENV
+          fi
+        env:
+          ARCH: ${{ matrix.arch }}
+          VER: ${{ matrix.version }}
+
+      - name: Build IPK inside SDK
+        run: |
+          docker run --rm \
+            -v "$PWD":/work \
+            -w /work \
+            -e EXTRA_FEEDS="src-git zapret https://github.com/remittor/zapret-openwrt.git;zap1" \
+            -e PACKAGES="zapret luci-app-zapret" \
+            -e IGNORE_ERRORS=1 \
+            "$SDK_IMAGE" \
+            bash -c '
+              set -e
+              cat > feeds.conf.default <<EOF
+          src-git base https://git.openwrt.org/openwrt/openwrt.git
+          src-git packages https://git.openwrt.org/feed/packages.git
+          src-git luci https://git.openwrt.org/project/luci.git
+          src-git routing https://git.openwrt.org/feed/routing.git
+          src-git telephony https://git.openwrt.org/feed/telephony.git
+          $EXTRA_FEEDS
+          EOF
+              cp feeds.conf.default feeds.conf
+              ./scripts/feeds update -a
+              for pkg in $PACKAGES; do
+                ./scripts/feeds install -a -p zapret || true
+                ./scripts/feeds install "$pkg" || echo "cannot install $pkg"
+              done
+              make defconfig
+              for pkg in $PACKAGES; do
+                make package/feeds/zapret/$pkg/compile V=s || \
+                make package/$pkg/compile V=s || echo "FAILED: $pkg"
+              done
+              mkdir -p /work/built
+              find bin/packages -name "*.ipk" -exec cp -v {} /work/built/ \;
+            ' || echo "Build step finished with non-zero code — смотрим, что успело собраться"
+
+      - name: Collect built packages
+        if: always()
+        run: |
+          echo "=== Найдено .ipk в ./built ==="
+          find built -name "*.ipk" -print 2>/dev/null || true
+          ls -la built 2>/dev/null || true
+
+      - name: Publish IPK packages
+        if: success()
+        env:
+          OUT_DIR: ${{ matrix.out_dir }}
+        run: |
+          set -e
+          mkdir -p "$OUT_DIR"
+          if [ ! -d built ]; then
+            echo "⚠ Папки built нет — нечего публиковать."
+            exit 0
+          fi
+          IPK_FILES=$(find built -maxdepth 1 -name "*.ipk" -type f || true)
+          if [ -z "$IPK_FILES" ]; then
+            echo "⚠ Ни одного .ipk не найдено."
+            exit 0
+          fi
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            cp -v "$f" "$OUT_DIR"/
+          done <<< "$IPK_FILES"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$OUT_DIR"/*
+          git commit -m "auto: rebuild $OUT_DIR packages" || echo "Нет изменений"
+          git push origin main || echo "Нечего пушить"
