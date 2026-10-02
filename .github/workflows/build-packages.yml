@@ -20,8 +20,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - aarch64_cortex-a53
+        include:
+          # mediatek/filogic — ASUS RT-AX53U, ZBT Z8102AX, Xiaomi AX3000T и др.
+          - arch: aarch64_cortex-a53
+            target: mediatek
+            subtarget: filogic
+            out: aarch64_cortex-a53
 
     steps:
       - name: Checkout repository
@@ -33,11 +37,11 @@ jobs:
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}
-          # ВАЖНО: у репозитория remittor/zapret-openwrt ветка по умолчанию = zap1,
-          # поэтому указываем её через ";zap1" в конце URL.
+          TARGET: ${{ matrix.target }}
+          SUBTARGET: ${{ matrix.subtarget }}
+          # Ветка указывается через ^ (карет), это формат OpenWrt feeds
           EXTRA_FEEDS: >-
-            src-git zapret https://github.com/remittor/zapret-openwrt.git;zap1
-          # Собираем оба пакета из фида
+            src-git zapret https://github.com/remittor/zapret-openwrt.git^zap1
           PACKAGES: zapret luci-app-zapret
           INDEX: 1
           IGNORE_ERRORS: 1
@@ -55,10 +59,10 @@ jobs:
       - name: Publish packages to repository
         if: success()
         env:
-          ARCH: ${{ matrix.arch }}
+          OUT: ${{ matrix.out }}
         run: |
           set -e
-          mkdir -p "$ARCH"
+          mkdir -p "$OUT"
 
           IPK_FILES=$(find bin -name "*.ipk" -type f | head -50 || true)
           INDEX_FILES=$(find bin -name "Packages*" -type f || true)
@@ -72,18 +76,18 @@ jobs:
           echo "$IPK_FILES"
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            cp -v "$f" "$ARCH"/
+            cp -v "$f" "$OUT"/
           done <<< "$IPK_FILES"
 
           echo "Найдены индексы:"
           echo "$INDEX_FILES"
           while IFS= read -r f; do
             [ -z "$f" ] && continue
-            cp -v "$f" "$ARCH"/
+            cp -v "$f" "$OUT"/
           done <<< "$INDEX_FILES"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$ARCH"/*
-          git commit -m "auto: rebuild $ARCH packages" || echo "Нет изменений для коммита"
+          git add "$OUT"/*
+          git commit -m "auto: rebuild $OUT packages" || echo "Нет изменений для коммита"
           git push origin main || echo "Нечего пушить"
