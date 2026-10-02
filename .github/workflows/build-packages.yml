@@ -22,38 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- OpenWrt 23.05 (формат .ipk) ---
-          - version: 23.05.5
-            arch: aarch64_cortex-a53
-            out_dir: 23.05/aarch64_cortex-a53
-          - version: 23.05.5
-            arch: mipsel_24kc
-            out_dir: 23.05/mipsel_24kc
-          - version: 23.05.5
-            arch: mips_24kc
-            out_dir: 23.05/mips_24kc
-
-          # --- OpenWrt 24.10 (формат .ipk) ---
-          - version: 24.10.5
+          - version: "24.10.5"
             arch: aarch64_cortex-a53
             out_dir: 24.10/aarch64_cortex-a53
-          - version: 24.10.5
-            arch: mipsel_24kc
-            out_dir: 24.10/mipsel_24kc
-          - version: 24.10.5
-            arch: mips_24kc
-            out_dir: 24.10/mips_24kc
-
-          # --- OpenWrt 25.12 (формат .apk) ---
-          - version: 25.12.0
-            arch: aarch64_cortex-a53
-            out_dir: 25.12/aarch64_cortex-a53
-          - version: 25.12.0
-            arch: mipsel_24kc
-            out_dir: 25.12/mipsel_24kc
-          - version: 25.12.0
-            arch: mips_24kc
-            out_dir: 25.12/mips_24kc
 
     steps:
       - name: Checkout repository
@@ -61,14 +32,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Show current feeds.conf (for debug)
+        run: |
+          echo "=== ДО добавления фида ==="
+          cat feeds.conf 2>/dev/null || echo "(feeds.conf ещё нет)"
+
       - name: Build packages via SDK
-        uses: openwrt/gh-action-sdk@v9
+        uses: openwrt/gh-action-sdk@main
         env:
-          VERSION: ${{ matrix.version }}
           ARCH: ${{ matrix.arch }}
-          EXTRA_FEEDS: >-
-            src-git zapret https://github.com/remittor/zapret-openwrt.git
-          PACKAGES: zapret luci-app-zapret
+          VERSION: ${{ matrix.version }}
+          # ВАЖНО: одной строкой в кавычках, без YAML-многострочного блока
+          EXTRA_FEEDS: "src-git zapret https://github.com/vladmir1981/zapret-openwrt.git"
+          PACKAGES: "zapret luci-app-zapret"
           INDEX: 1
           IGNORE_ERRORS: 1
 
@@ -79,44 +55,3 @@ jobs:
           find bin -name "*.ipk" -print || true
           echo "=== Поиск .apk ==="
           find bin -name "*.apk" -print || true
-
-      - name: Publish packages to repository
-        if: success()
-        env:
-          OUT_DIR: ${{ matrix.out_dir }}
-        run: |
-          set -e
-          mkdir -p "$OUT_DIR"
-
-          IPK_FILES=$(find bin -name "*.ipk" -type f || true)
-          APK_FILES=$(find bin -name "*.apk" -type f || true)
-          INDEX_FILES=$(find bin -name "Packages*" -type f || true)
-
-          if [ -z "$IPK_FILES" ] && [ -z "$APK_FILES" ]; then
-            echo "⚠ Ни одного пакета не найдено."
-            exit 0
-          fi
-
-          # Копируем .ipk
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$IPK_FILES"
-
-          # Копируем .apk
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$APK_FILES"
-
-          # Копируем индексы
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$INDEX_FILES"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$OUT_DIR"/*
-          git commit -m "auto: rebuild $OUT_DIR packages" || echo "Нет изменений"
-          git push origin main || echo "Нечего пушить"
