@@ -22,7 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- 24.10 ---
           - version: "24.10.5"
             target: mediatek
             subtarget: filogic
@@ -31,7 +30,6 @@ jobs:
             target: ramips
             subtarget: mt7621
             out_dir: 24.10/mipsel_24kc
-          # --- 23.05 ---
           - version: "23.05.5"
             target: mediatek
             subtarget: filogic
@@ -61,25 +59,21 @@ jobs:
         run: |
           set -e
           BASE="https://downloads.openwrt.org/releases/${VER}/targets/${TGT}/${SUB}"
-          echo "[Инфо] Качаем sha256sums из $BASE"
           wget -q "$BASE/sha256sums"
           IB=$(grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.zst' sha256sums | head -1)
           if [ -z "$IB" ]; then
-            echo "❌ Не нашли SDK в sha256sums" >&2
+            echo "SDK не найден в sha256sums" >&2
             cat sha256sums >&2
             exit 1
           fi
-          echo "[Инфо] SDK файл: $IB"
+          echo "SDK файл: $IB"
           wget -q "$BASE/$IB"
           mkdir -p sdk
           tar -xf "$IB" -C sdk --strip-components=1
           rm -f "$IB" sha256sums
-          echo "[Инфо] SDK распакован в ./sdk"
 
-      - name: Build packages inside SDK
+      - name: Build zapret inside SDK
         working-directory: sdk
-        env:
-          PKGS: "zapret luci-app-zapret"
         run: |
           set -e
           cat > feeds.conf <<'EOF'
@@ -92,20 +86,22 @@ jobs:
           EOF
           ./scripts/feeds update -a || true
           ./scripts/feeds install -a -p zapret || true
-          for pkg in $PKGS; do
-            ./scripts/feeds install "$pkg" || echo "⚠ cannot install $pkg"
-          done
+          ./scripts/feeds install zapret || true
+          ./scripts/feeds install luci-app-zapret || true
           make defconfig
-          for pkg in $PKGS; do
-            echo "=== Компиляция $pkg ==="
-            make package/$pkg/compile V=s || echo "❌ FAILED: $pkg"
-          done
+          make package/zapret/compile V=s || \
+          make package/feeds/zapret/zapret/compile V=s || \
+          echo "FAILED zapret"
+          make package/luci-app-zapret/compile V=s || \
+          make package/feeds/zapret/luci-app-zapret/compile V=s || \
+          echo "FAILED luci-app-zapret"
 
-      - name: Collect built packages
+      - name: Collect only zapret packages
         if: always()
         run: |
-          echo "=== Найдено .ipk в sdk/bin ==="
-          find sdk/bin -name "*.ipk" -print 2>/dev/null || true
+          echo "=== Ищем только zapret_* и luci-app-zapret_* ==="
+          find sdk/bin -name "zapret_*.ipk" -print || true
+          find sdk/bin -name "luci-app-zapret_*.ipk" -print || true
 
       - name: Publish IPK packages
         if: always()
@@ -114,17 +110,25 @@ jobs:
         run: |
           set -e
           mkdir -p "$OUT_DIR"
-          IPK_FILES=$(find sdk/bin -name "*.ipk" -type f 2>/dev/null || true)
-          if [ -z "$IPK_FILES" ]; then
-            echo "⚠ Ни одного .ipk не найдено."
+
+          found=0
+          for pattern in "zapret_*.ipk" "luci-app-zapret_*.ipk"; do
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              cp -v "$f" "$OUT_DIR"/
+              found=$((found+1))
+            done < <(find sdk/bin -name "$pattern" -type f 2>/dev/null)
+          done
+
+          if [ "$found" -eq 0 ]; then
+            echo "⚠ Ни одного zapret-пакета не найдено."
             exit 0
           fi
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            cp -v "$f" "$OUT_DIR"/
-          done <<< "$IPK_FILES"
+
+          echo "Скопировано пакетов: $found"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$OUT_DIR"/*
-          git commit -m "auto: rebuild $OUT_DIR packages" || echo "Нет изменений"
+          git add -f "$OUT_DIR"/*
+          git commit -m "auto: rebuild $OUT_DIR zapret packages" || echo "Нет изменений"
           git push origin main || echo "Нечего пушить"
