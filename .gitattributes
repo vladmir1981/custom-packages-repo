@@ -1,0 +1,4 @@
+*.ipk binary
+*.apk binary
+*.gz binary
+*.zst binary
