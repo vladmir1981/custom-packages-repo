@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1        # <-- job'ы идут по одному, без гонки за git
+      max-parallel: 1
       matrix:
         include:
           - version: "24.10.5"
@@ -64,16 +64,12 @@ jobs:
         run: |
           set -e
           BASE="https://downloads.openwrt.org/releases/${VER}/targets/${TGT}/${SUB}"
-          echo "[Инфо] Качаем sha256sums из $BASE"
           wget -q "$BASE/sha256sums"
-          echo "[Инфо] Ищем SDK в sha256sums..."
           IB=$(grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.(zst|xz)' sha256sums | head -1)
           if [ -z "$IB" ]; then
-            echo "SDK не найден. Первые 20 строк sha256sums:" >&2
-            head -20 sha256sums >&2
-            exit 1
+            echo "SDK не найден"; head -20 sha256sums; exit 1
           fi
-          echo "[Инфо] SDK файл: $IB"
+          echo "SDK файл: $IB"
           wget -q "$BASE/$IB"
           mkdir -p sdk
           if [[ "$IB" == *.zst ]]; then
@@ -82,7 +78,6 @@ jobs:
             tar -xf "$IB" -C sdk --strip-components=1
           fi
           rm -f "$IB" sha256sums
-          echo "[Инфо] SDK распакован в ./sdk"
 
       - name: Build zapret inside SDK
         working-directory: sdk
@@ -108,14 +103,15 @@ jobs:
           make package/feeds/zapret/luci-app-zapret/compile V=s || \
           echo "FAILED luci-app-zapret"
 
-      - name: Collect only zapret packages
-        if: always()
+      - name: Find index script in SDK
+        id: find_idx
         run: |
-          echo "=== Ищем zapret_* и luci-app-zapret_* ==="
-          find sdk/bin -name "zapret_*.ipk" -print || true
-          find sdk/bin -name "luci-app-zapret_*.ipk" -print || true
+          echo "=== Ищем ipkg-make-index.sh и opkg-make-index ==="
+          find sdk -name "ipkg-make-index.sh" -o -name "opkg-make-index" 2>/dev/null || true
+          ls -la sdk/scripts/ | head -50 || true
+          ls -la sdk/staging_dir/host/bin/ | grep -i index || true
 
-      - name: Publish IPK packages
+      - name: Collect and index zapret packages
         if: always()
         env:
           OUT_DIR: ${{ matrix.out_dir }}
@@ -123,38 +119,73 @@ jobs:
           set -e
           mkdir -p "$OUT_DIR"
 
+          # Копируем .ipk
           find sdk/bin -name "zapret_*.ipk" -type f -exec cp -v {} "$OUT_DIR"/ \;
           find sdk/bin -name "luci-app-zapret_*.ipk" -type f -exec cp -v {} "$OUT_DIR"/ \;
 
           FILE_COUNT=$(find "$OUT_DIR" -maxdepth 1 -name "*.ipk" -type f | wc -l)
-          echo "Найдено в $OUT_DIR: $FILE_COUNT файлов .ipk"
+          echo "Скопировано .ipk: $FILE_COUNT"
 
           if [ "$FILE_COUNT" -eq 0 ]; then
-            echo "⚠ Ни одного .ipk не скопировано — выходим."
+            echo "⚠ Нет .ipk — выходим"
             exit 0
           fi
 
-          if [ -f sdk/scripts/ipkg-make-index.sh ]; then
-            sdk/scripts/ipkg-make-index.sh "$OUT_DIR" > "$OUT_DIR/Packages" 2>/dev/null || true
+          # Пробуем разные пути к скрипту генерации индекса
+          IDX_SCRIPT=""
+          for candidate in \
+              "sdk/scripts/ipkg-make-index.sh" \
+              "sdk/staging_dir/host/bin/ipkg-make-index.sh" \
+              "sdk/staging_dir/host/bin/opkg-make-index"; do
+            if [ -x "$candidate" ]; then
+              IDX_SCRIPT="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$IDX_SCRIPT" ]; then
+            echo "❌ Не нашли скрипт индекса. Устанавливаем opkg-tools..."
+            sudo apt install -y opkg-utils || sudo apt install -y ipkg-utils || true
+            IDX_SCRIPT=$(command -v opkg-make-index || command -v ipkg-make-index || true)
+          fi
+
+          echo "=== Используем индекс-скрипт: $IDX_SCRIPT ==="
+
+          if [ -n "$IDX_SCRIPT" ]; then
+            cd "$OUT_DIR"
+            "$GITHUB_WORKSPACE/$IDX_SCRIPT" . > Packages 2>&1 || {
+              echo "⚠ Скрипт упал, пробуем как абсолютный путь"
+              "$IDX_SCRIPT" . > Packages 2>&1 || echo "Ошибка"
+            }
+            cd -
             gzip -kf "$OUT_DIR/Packages" || true
-            echo "=== Индекс Packages сгенерирован ==="
-            ls -la "$OUT_DIR"
+            echo "=== Первые строки Packages ==="
+            head -40 "$OUT_DIR/Packages" || echo "(пусто)"
           else
-            echo "⚠ ipkg-make-index.sh не найден, индекс не создан"
+            echo "⚠ Не нашли скрипт — попробуем вручную через python"
+          fi
+
+          ls -la "$OUT_DIR"
+
+      - name: Publish packages
+        if: always()
+        env:
+          OUT_DIR: ${{ matrix.out_dir }}
+        run: |
+          set -e
+          if [ ! -f "$OUT_DIR/Packages" ] || [ ! -s "$OUT_DIR/Packages" ]; then
+            echo "⚠ Packages пуст — пропускаем публикацию"
+            exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "$OUT_DIR"/*
-          git commit -m "auto: rebuild $OUT_DIR zapret packages" || echo "Нет изменений"
+          git commit -m "auto: rebuild $OUT_DIR packages (with index)" || echo "Нет изменений"
 
           git pull --rebase origin main || true
           for i in 1 2 3; do
-            if git push origin main; then
-              echo "Push успешен (попытка $i)"
-              break
-            fi
-            echo "Push отклонён, подтягиваем изменения и пробуем снова..."
+            if git push origin main; then break; fi
             git pull --rebase origin main || true
             sleep 3
           done
