@@ -11,6 +11,10 @@ on:
       - 'manifest.json'
       - 'arch_map.json'
 
+# ВАЖНО: без этого автопуш обратно в репо не сработает
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,14 +34,9 @@ jobs:
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}
-          # Какие пакеты собирать (имена пакетов, как в Makefile)
-          PACKAGES: zapret2
-          # Внешние фиды с исходниками — один фид на строку
-          EXTRA_FEEDS: >-
-            src-git zapret2 https://github.com/spvkgn/zapret2-openwrt.git
-          # Генерируем Packages и Packages.gz
+          # Пробуем собрать СТАНДАРТНЫЙ пакет — без кастомных фидов.
+          PACKAGES: curl
           INDEX: 1
-          # Продолжаем, даже если какой-то пакет не собрался
           IGNORE_ERRORS: 1
 
       - name: Collect built packages
@@ -53,10 +52,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           set -e
-          # Создаём папку архитектуры (если ещё нет — она уже есть в репо)
           mkdir -p "$ARCH"
-
-          # Копируем .ipk и индекс из SDK-билда в папку архитектуры
           SRC_IPK_DIR="bin/packages/$ARCH/packages"
           if [ -d "$SRC_IPK_DIR" ]; then
             cp -v "$SRC_IPK_DIR"/*.ipk "$ARCH"/ 2>/dev/null || true
@@ -64,8 +60,6 @@ jobs:
             cp -v "$SRC_IPK_DIR"/Packages.gz "$ARCH"/ 2>/dev/null || true
             cp -v "$SRC_IPK_DIR"/Packages.manifest "$ARCH"/ 2>/dev/null || true
           fi
-
-          # Настраиваем коммит
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$ARCH"/*
