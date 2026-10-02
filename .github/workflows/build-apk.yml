@@ -35,11 +35,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build APK via gh-action-sdk
+            - name: Build APK via gh-action-sdk
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}
-          EXTRA_FEEDS: "src-git zapret https://github.com/remittor/zapret-openwrt.git;zap1"
+          EXTRA_FEEDS: |
+            src-git zapret https://github.com/remittor/zapret-openwrt.git
           PACKAGES: "zapret luci-app-zapret"
           INDEX: 1
           IGNORE_ERRORS: 1
