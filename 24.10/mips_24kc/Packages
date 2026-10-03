@@ -1,10 +1,7 @@
 Package: luci-app-zapret
 Version: 72.20260307-r1
 Depends: libc, zapret
-Provides: 
-Status: install ok installed
 Architecture: all
-Installed-Size: 0
 Filename: luci-app-zapret_72.20260307-r1_all.ipk
 Size: 22459
 SHA256sum: dec21cee015c890eddf27a10f1311c623a619f1d2362b1d68c61b71647f5ab0f
@@ -13,10 +10,7 @@ Description:  LuCI support for zapret
 Package: zapret
 Version: 72.20260307-r1
 Depends: libc, nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
-Provides: 
-Status: install ok installed
 Architecture: mips_24kc
-Installed-Size: 0
 Filename: zapret_72.20260307-r1_mips_24kc.ipk
 Size: 178320
 SHA256sum: a26610c4327cc5a3268d37094cc887a607715141e680c693269afb481b5972ee

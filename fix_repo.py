@@ -20,14 +20,16 @@ def get_control(ipk_path):
                 for m in outer.getmembers():
                     if "control.tar" in m.name:
                         ext = outer.extractfile(m)
-                        if not ext: continue
+                        if not ext:
+                            continue
                         cd = ext.read()
                         mode = "r:gz" if cd[:2] == b"\x1f\x8b" else ("r:xz" if cd[:6] == b"\xfd7zXZ\x00" else "r:")
                         with tarfile.open(fileobj=io.BytesIO(cd), mode=mode) as inner:
                             for mm in inner.getmembers():
                                 if mm.name.endswith("control"):
                                     cf = inner.extractfile(mm)
-                                    if cf: return cf.read().decode("utf-8", "ignore")
+                                    if cf:
+                                        return cf.read().decode("utf-8", "ignore")
         except Exception as e:
             print(f"  [!] {e}")
     return ""
@@ -46,22 +48,27 @@ def make_entry(ipk_path):
             k, v = line.split(": ", 1)
             fields[k] = v
             cur = k
+
     size = os.path.getsize(ipk_path)
     with open(ipk_path, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
-    return "\n".join([
+
+    lines = [
         f"Package: {fields.get('Package', '')}",
         f"Version: {fields.get('Version', '')}",
-        f"Depends: {fields.get('Depends', '')}",
-        f"Provides: {fields.get('Provides', '')}",
-        "Status: install ok installed",
+    ]
+    if fields.get("Depends"):
+        lines.append(f"Depends: {fields['Depends']}")
+    if fields.get("Provides"):
+        lines.append(f"Provides: {fields['Provides']}")
+    lines += [
         f"Architecture: {fields.get('Architecture', '')}",
-        "Installed-Size: 0",
         f"Filename: {ipk_path.name}",
         f"Size: {size}",
         f"SHA256sum: {sha}",
         f"Description: {fields.get('Description', '')}",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def rebuild_packages(directory: Path):
@@ -81,7 +88,7 @@ def rebuild_packages(directory: Path):
     (directory / "Packages").write_text(text, encoding="utf-8")
     with gzip.open(directory / "Packages.gz", "wb") as f:
         f.write(text.encode("utf-8"))
-    print(f"      → Packages записан ({len(entries)} пакетов)")
+    print(f"      -> Packages записан ({len(entries)} пакетов)")
     return len(entries)
 
 

@@ -118,19 +118,22 @@ def make_entry(ipk_path):
         sha = hashlib.sha256(f.read()).hexdigest()
     name = os.path.basename(ipk_path)
 
-    return "\n".join([
+    lines = [
         f"Package: {fields.get('Package', '')}",
         f"Version: {fields.get('Version', '')}",
-        f"Depends: {fields.get('Depends', '')}",
-        f"Provides: {fields.get('Provides', '')}",
-        "Status: install ok installed",
+    ]
+    if fields.get("Depends"):
+        lines.append(f"Depends: {fields['Depends']}")
+    if fields.get("Provides"):
+        lines.append(f"Provides: {fields['Provides']}")
+    lines += [
         f"Architecture: {fields.get('Architecture', '')}",
-        "Installed-Size: 0",
         f"Filename: {name}",
         f"Size: {size}",
         f"SHA256sum: {sha}",
         f"Description: {fields.get('Description', '')}",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def process_dir(directory: Path):
