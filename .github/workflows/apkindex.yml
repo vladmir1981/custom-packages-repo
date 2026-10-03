@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 1        # <-- job'ы идут строго по одному
       matrix:
         arch:
           - aarch64_cortex-a53
@@ -24,10 +25,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Show apk-tools version (debug)
-        run: |
-          docker run --rm ghcr.io/openwrt/sdk:x86_64 sh -c 'apk --version || true' || true
 
       - name: Generate APKINDEX for ${{ matrix.arch }}
         run: |
@@ -52,5 +49,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "25.12/${{ matrix.arch }}/APKINDEX.tar.gz"
           git commit -m "auto: rebuild APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
-          git pull --rebase origin main || true
-          git push || true
+
+          # Retry-цикл на случай гонки
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main || true
+            if git push origin main; then
+              echo "Push успешен (попытка $i)"
+              break
+            fi
+            echo "Push отклонён, повтор через 5 сек..."
+            sleep 5
+          done
