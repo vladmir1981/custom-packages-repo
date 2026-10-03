@@ -31,60 +31,72 @@ jobs:
           set -e
           cd /tmp
           URL_BASE="https://dl-cdn.alpinelinux.org/alpine/edge/main/x86_64"
-          echo "=== Ищем apk-tools-static ==="
           FILE=$(wget -qO- "$URL_BASE/" | grep -oE 'apk-tools-static-[^"]+\.apk' | head -1)
-          if [ -z "$FILE" ]; then
-            echo "Не нашли apk-tools-static — вывожу содержимое каталога:"
-            wget -qO- "$URL_BASE/" | grep -i "apk-tools" | head -20
-            exit 1
-          fi
-          echo "Downloading: $FILE"
           wget -q "$URL_BASE/$FILE"
-
-          echo "=== Распаковка (это tar.gz-контейнер) ==="
           mkdir -p /tmp/apk_extract
           tar -xzf "$FILE" -C /tmp/apk_extract
-          find /tmp/apk_extract -type f
-
-          echo "=== Поиск apk.static ==="
           APK_BIN=$(find /tmp/apk_extract -name "apk.static" -type f | head -1)
-          if [ -z "$APK_BIN" ]; then
-            echo "apk.static не найден"
-            exit 1
-          fi
           chmod +x "$APK_BIN"
           echo "APK_BIN=$APK_BIN" >> $GITHUB_ENV
-          echo "=== Версия apk ==="
+
+      - name: Diagnose apk
+        run: |
+          echo "=== apk version ==="
           "$APK_BIN" --version || true
+          echo
+          echo "=== apk index --help ==="
+          "$APK_BIN" index --help 2>&1 | head -60 || true
+          echo
+          echo "=== apk --help ==="
+          "$APK_BIN" --help 2>&1 | head -40 || true
 
       - name: Generate APKINDEX for ${{ matrix.arch }}
         run: |
           set -e
           cd "25.12/${{ matrix.arch }}"
-          echo "=== Файлы в папке ==="
-          ls -la
-          echo "=== Генерация APKINDEX.tar.gz ==="
-          "$APK_BIN" index -o APKINDEX.tar.gz --allow-untrusted *.apk || {
-            echo "=== Fallback: без --allow-untrusted ==="
-            "$APK_BIN" index -o APKINDEX.tar.gz *.apk
-          }
-          echo "=== Результат ==="
+          rm -f APKINDEX.tar.gz
+          echo "=== files ==="
           ls -la
 
+          echo
+          echo "=== TRY 1: index --allow-untrusted -o ... ==="
+          if "$APK_BIN" index --allow-untrusted -o APKINDEX.tar.gz *.apk; then
+            echo "SUCCESS TRY 1"; exit 0
+          fi
+
+          echo
+          echo "=== TRY 2: index --no-verify -o ... ==="
+          if "$APK_BIN" index --no-verify -o APKINDEX.tar.gz *.apk; then
+            echo "SUCCESS TRY 2"; exit 0
+          fi
+
+          echo
+          echo "=== TRY 3: --allow-untrusted index (флаг перед командой) ==="
+          if "$APK_BIN" --allow-untrusted index -o APKINDEX.tar.gz *.apk; then
+            echo "SUCCESS TRY 3"; exit 0
+          fi
+
+          echo
+          echo "=== TRY 4: adbdump -o ... ==="
+          if "$APK_BIN" adbdump -o APKINDEX.tar.gz *.apk 2>/dev/null; then
+            echo "SUCCESS TRY 4"; exit 0
+          fi
+
+          echo
+          echo "=== Все попытки провалились ==="
+          ls -la
+          exit 1
+
       - name: Commit APKINDEX
+        if: success()
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "25.12/${{ matrix.arch }}/APKINDEX.tar.gz"
-          git commit -m "auto: rebuild APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
-
+          git commit -m "auto: APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
           for i in 1 2 3 4 5; do
             git pull --rebase origin main || true
-            if git push origin main; then
-              echo "Push успешен (попытка $i)"
-              break
-            fi
-            echo "Push отклонён, повтор через 5 сек..."
+            if git push origin main; then break; fi
             sleep 5
           done
