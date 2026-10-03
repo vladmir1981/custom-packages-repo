@@ -6,8 +6,8 @@ Status: install ok installed
 Architecture: all
 Installed-Size: 0
 Filename: luci-app-zapret_72.20260307-r1_all.ipk
-Size: 18460
-SHA256sum: 9ca3bb94abeabeb23159366aa7eae8b8fc6a204f6fe535ecfa7b87b81752b8da
+Size: 22459
+SHA256sum: dec21cee015c890eddf27a10f1311c623a619f1d2362b1d68c61b71647f5ab0f
 Description:  LuCI support for zapret
 
 Package: zapret
@@ -18,6 +18,6 @@ Status: install ok installed
 Architecture: aarch64_cortex-a53
 Installed-Size: 0
 Filename: zapret_72.20260307-r1_aarch64_cortex-a53.ipk
-Size: 194298
-SHA256sum: f9e8a4d885e494f3cdf853c8e866778f967b1a8d1e9e07d65122694e8b634367
+Size: 194215
+SHA256sum: b06c53ebaa665cfe746bba4f434087dab5ce7d29fdd466d1391cb793257c4837
 Description:  zapret

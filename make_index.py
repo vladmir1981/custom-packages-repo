@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Генерирует Packages и Packages.gz для папки с .ipk файлами.
+Генерирует Packages и Packages.gz рекурсивно во всех папках
+с .ipk файлами внутри текущей директории.
 
-Использование:
-    python3 make_index.py <путь_к_папке>
+Запуск: python make_index.py
 """
 import gzip
 import hashlib
@@ -12,13 +12,14 @@ import os
 import sys
 import tarfile
 import glob
+from pathlib import Path
 
 
 def get_control(ipk_path):
     with open(ipk_path, "rb") as f:
         data = f.read()
 
-    # Современный .ipk = tar.gz
+    # Современный .ipk = gzip-tar
     if data[:2] == b"\x1f\x8b":
         try:
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as outer:
@@ -132,37 +133,42 @@ def make_entry(ipk_path):
     ])
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Использование: python3 make_index.py <папка>")
-        sys.exit(1)
+def process_dir(directory: Path):
+    ipks = sorted(directory.glob("*.ipk"))
+    if not ipks:
+        return 0
 
-    out_dir = sys.argv[1]
-    if not os.path.isdir(out_dir):
-        print(f"[!] Папка не найдена: {out_dir}")
-        sys.exit(1)
-
-    ipks = sorted(glob.glob(os.path.join(out_dir, "*.ipk")))
-    print(f"[Инфо] {out_dir}: найдено {len(ipks)} .ipk")
+    print(f"\n[Инфо] {directory.relative_to(Path.cwd())}: найдено {len(ipks)} .ipk")
 
     entries = []
     for ipk in ipks:
-        e = make_entry(ipk)
+        e = make_entry(str(ipk))
         if e:
             entries.append(e)
-            print(f"  [+] {os.path.basename(ipk)}")
+            print(f"  [+] {ipk.name}")
 
     if not entries:
-        print("[!] Ни одной записи — Packages не будет создан")
-        sys.exit(1)
+        print(f"  [!] Нет валидных записей — Packages не обновляю")
+        return 0
 
     text = "\n\n".join(entries) + "\n"
-    with open(os.path.join(out_dir, "Packages"), "w", encoding="utf-8") as f:
+    with open(directory / "Packages", "w", encoding="utf-8") as f:
         f.write(text)
-    with gzip.open(os.path.join(out_dir, "Packages.gz"), "wb") as f:
+    with gzip.open(directory / "Packages.gz", "wb") as f:
         f.write(text.encode("utf-8"))
 
-    print(f"\n[+] Записано {len(entries)} пакетов в Packages и Packages.gz")
+    print(f"  [+] Packages и Packages.gz записаны ({len(entries)} шт.)")
+    return len(entries)
+
+
+def main():
+    root = Path.cwd()
+    print(f"=== Обход {root} ===")
+    total = 0
+    for d in sorted(root.rglob("*")):
+        if d.is_dir() and not any(p.startswith(".") for p in d.relative_to(root).parts):
+            total += process_dir(d)
+    print(f"\n=== Всего записей: {total} ===")
 
 
 if __name__ == "__main__":

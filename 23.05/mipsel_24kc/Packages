@@ -1,1 +1,23 @@
-/home/runner/work/_temp/f927fe7e-8b27-432f-a7ff-59b28a13183d.sh: line 40: sdk/scripts/ipkg-make-index.sh: No such file or directory
+Package: luci-app-zapret
+Version: 72.20260307-r1
+Depends: libc, zapret
+Provides: 
+Status: install ok installed
+Architecture: all
+Installed-Size: 0
+Filename: luci-app-zapret_72.20260307-r1_all.ipk
+Size: 22459
+SHA256sum: dec21cee015c890eddf27a10f1311c623a619f1d2362b1d68c61b71647f5ab0f
+Description:  LuCI support for zapret
+
+Package: zapret
+Version: 72.20260307-r1
+Depends: libc, nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
+Provides: 
+Status: install ok installed
+Architecture: mipsel_24kc
+Installed-Size: 0
+Filename: zapret_72.20260307-r1_mipsel_24kc.ipk
+Size: 178531
+SHA256sum: 134d519d439adac65cb495fc6eeff3a37b5dda336de2dc5cf59cc3e030811ab7
+Description:  zapret
