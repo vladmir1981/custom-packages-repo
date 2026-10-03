@@ -18,7 +18,7 @@ Description:  LuCI support for zapret
 
 Package: zapret2
 Version: 1.0.5.2
-Depends: nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
+Depends: curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
 Architecture: mipsel_24kc
 Filename: zapret2_mipsel_24kc.ipk
 Size: 610824
@@ -27,7 +27,7 @@ Description: zapret2 (nfqws2) DPI bypass — prebuilt by 1andrevich/zapret2-open
 
 Package: zapret
 Version: 72.20260307-r1
-Depends: libc, nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
+Depends: libc, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
 Architecture: mipsel_24kc
 Filename: zapret_72.20260307-r1_mipsel_24kc.ipk
 Size: 178531

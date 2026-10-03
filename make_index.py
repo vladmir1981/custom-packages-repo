@@ -3,7 +3,8 @@
 Генерирует Packages и Packages.gz рекурсивно во всех папках
 с .ipk файлами внутри текущей директории.
 
-Запуск: python make_index.py
+Убирает конфликтующие зависимости (nftables, nftables-json) —
+они уже предоставлены базовым пакетом nftables-nojson от firewall4.
 """
 import gzip
 import hashlib
@@ -13,6 +14,9 @@ import sys
 import tarfile
 import glob
 from pathlib import Path
+
+# Зависимости, которые надо УБРАТЬ из Package:
+CONFLICTING_DEPS = {"nftables", "nftables-json"}
 
 
 def get_control(ipk_path):
@@ -118,12 +122,17 @@ def make_entry(ipk_path):
         sha = hashlib.sha256(f.read()).hexdigest()
     name = os.path.basename(ipk_path)
 
+    # --- Фильтруем конфликтующие зависимости ---
+    depends_parts = [p.strip() for p in fields.get("Depends", "").split(",") if p.strip()]
+    depends_parts = [p for p in depends_parts if p not in CONFLICTING_DEPS]
+    depends = ", ".join(depends_parts)
+
     lines = [
         f"Package: {fields.get('Package', '')}",
         f"Version: {fields.get('Version', '')}",
     ]
-    if fields.get("Depends"):
-        lines.append(f"Depends: {fields['Depends']}")
+    if depends:
+        lines.append(f"Depends: {depends}")
     if fields.get("Provides"):
         lines.append(f"Provides: {fields['Provides']}")
     lines += [

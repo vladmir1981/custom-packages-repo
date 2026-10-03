@@ -9,7 +9,7 @@ Description: LuCI support for zapret2
 
 Package: zapret2
 Version: 1.0.5.2
-Depends: nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
+Depends: curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
 Architecture: mips_24kc
 Filename: zapret2_mips_24kc.ipk
 Size: 607779
