@@ -26,40 +26,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install apk.static (v3)
+        run: |
+          set -e
+          cd /tmp
+          URL_BASE="https://dl-cdn.alpinelinux.org/alpine/edge/main/x86_64"
+          echo "=== Ищем apk-tools-static ==="
+          FILE=$(wget -qO- "$URL_BASE/" | grep -oE 'apk-tools-static-[^"]+\.apk' | head -1)
+          if [ -z "$FILE" ]; then
+            echo "Не нашли apk-tools-static — вывожу содержимое каталога:"
+            wget -qO- "$URL_BASE/" | grep -i "apk-tools" | head -20
+            exit 1
+          fi
+          echo "Downloading: $FILE"
+          wget -q "$URL_BASE/$FILE"
+
+          echo "=== Распаковка (это tar.gz-контейнер) ==="
+          mkdir -p /tmp/apk_extract
+          tar -xzf "$FILE" -C /tmp/apk_extract
+          find /tmp/apk_extract -type f
+
+          echo "=== Поиск apk.static ==="
+          APK_BIN=$(find /tmp/apk_extract -name "apk.static" -type f | head -1)
+          if [ -z "$APK_BIN" ]; then
+            echo "apk.static не найден"
+            exit 1
+          fi
+          chmod +x "$APK_BIN"
+          echo "APK_BIN=$APK_BIN" >> $GITHUB_ENV
+          echo "=== Версия apk ==="
+          "$APK_BIN" --version || true
+
       - name: Generate APKINDEX for ${{ matrix.arch }}
         run: |
           set -e
-          docker run --rm \
-            -v "$PWD/25.12/${{ matrix.arch }}:/repo" \
-            -w /repo \
-            ghcr.io/openwrt/sdk:x86_64 \
-            sh -c '
-              echo "=== searching for apk binary ==="
-              APK_BIN=$(find / -type f -name "apk" 2>/dev/null | head -1)
-              APK_STATIC=$(find / -type f -name "apk.static" 2>/dev/null | head -1)
-              echo "apk       : $APK_BIN"
-              echo "apk.static: $APK_STATIC"
-
-              if [ -n "$APK_STATIC" ]; then
-                APK="$APK_STATIC"
-              elif [ -n "$APK_BIN" ]; then
-                APK="$APK_BIN"
-              else
-                echo "=== APK NOT FOUND ANYWHERE — покажу что есть в /builder ==="
-                ls -la /builder 2>/dev/null || true
-                ls -la /builder/staging_dir/host/bin 2>/dev/null | head -30 || true
-                exit 1
-              fi
-
-              echo "=== Using: $APK ==="
-              "$APK" --version || true
-
-              echo "=== generating index ==="
-              "$APK" index -o APKINDEX.tar.gz --allow-untrusted *.apk
-
-              echo "=== result ==="
-              ls -la
-            '
+          cd "25.12/${{ matrix.arch }}"
+          echo "=== Файлы в папке ==="
+          ls -la
+          echo "=== Генерация APKINDEX.tar.gz ==="
+          "$APK_BIN" index -o APKINDEX.tar.gz --allow-untrusted *.apk || {
+            echo "=== Fallback: без --allow-untrusted ==="
+            "$APK_BIN" index -o APKINDEX.tar.gz *.apk
+          }
+          echo "=== Результат ==="
+          ls -la
 
       - name: Commit APKINDEX
         run: |
