@@ -1,0 +1,47 @@
+name: Generate APKINDEX for 25.12
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '25.12/**/*.apk'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_cortex-a53
+          - mipsel_24kc
+          - mips_24kc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate APKINDEX for ${{ matrix.arch }}
+        run: |
+          set -e
+          docker run --rm \
+            -v "$PWD/25.12/${{ matrix.arch }}:/repo" \
+            alpine:edge \
+            sh -c '
+              apk add --no-cache apk-tools &&
+              cd /repo &&
+              apk index -o APKINDEX.tar.gz --allow-untrusted *.apk
+            '
+
+      - name: Commit APKINDEX
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 25.12/${{ matrix.arch }}/APKINDEX.tar.gz || true
+          git commit -m "auto: rebuild APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
+          git pull --rebase origin main || true
+          git push || true
