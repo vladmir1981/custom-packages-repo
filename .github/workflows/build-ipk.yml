@@ -69,7 +69,6 @@ jobs:
           if [ -z "$IB" ]; then
             echo "SDK не найден"; head -20 sha256sums; exit 1
           fi
-          echo "SDK: $IB"
           wget -q "$BASE/$IB"
           mkdir -p sdk
           if [[ "$IB" == *.zst ]]; then
@@ -116,132 +115,158 @@ jobs:
 
           FILE_COUNT=$(find "$OUT_DIR" -maxdepth 1 -name "*.ipk" -type f | wc -l)
           echo "Скопировано .ipk: $FILE_COUNT"
+          [ "$FILE_COUNT" -eq 0 ] && { echo "⚠ Нет .ipk — выходим"; exit 0; }
 
-          if [ "$FILE_COUNT" -eq 0 ]; then
-            echo "⚠ Нет .ipk — выходим"
-            exit 0
-          fi
+          # Диагностика: что за файл на самом деле
+          for ipk in "$OUT_DIR"/*.ipk; do
+            echo "=== $ipk ==="
+            file "$ipk" || true
+            head -c 8 "$ipk" | xxd || true
+          done
 
           python3 << 'PYEOF'
-          import os, sys, hashlib, tarfile, gzip, io, glob
+import os, sys, hashlib, tarfile, gzip, io, glob
 
-          OUT_DIR = os.environ["OUT_DIR"]
+OUT_DIR = os.environ["OUT_DIR"]
 
-          def read_ar(data):
-              """Читает ar-архив и возвращает {name: payload}."""
-              if not data.startswith(b"!<arch>\n"):
-                  return {}
-              result = {}
-              pos = 8
-              while pos + 60 <= len(data):
-                  hdr = data[pos:pos+60]
-                  if hdr[58:60] != b"\x60\x0a":
-                      break
-                  name = hdr[0:16].decode("ascii", "ignore").strip()
-                  try:
-                      size = int(hdr[48:58].decode("ascii", "ignore").strip())
-                  except ValueError:
-                      break
-                  pos += 60
+def get_control(ipk_path):
+    with open(ipk_path, "rb") as f:
+        data = f.read()
 
-                  # GNU extended name "#1/N"
-                  if name.startswith("#1/"):
-                      try:
-                          name_len = int(name[3:])
-                      except ValueError:
-                          name_len = 0
-                      real_name = data[pos:pos+name_len].decode("ascii", "ignore").strip()
-                      pos += name_len
-                      size -= name_len
-                  else:
-                      real_name = name.rstrip("/")
+    # === Случай 1: современный OpenWrt .ipk = tar.gz ===
+    if data[:2] == b"\x1f\x8b":
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as outer:
+                for member in outer.getmembers():
+                    if "control.tar" in member.name:
+                        ctrl_extracted = outer.extractfile(member)
+                        if not ctrl_extracted:
+                            continue
+                        ctrl_data = ctrl_extracted.read()
+                        # Внутренний control.tar может быть gz / xz / несжатым
+                        if ctrl_data[:2] == b"\x1f\x8b":
+                            inner_mode = "r:gz"
+                        elif ctrl_data[:6] == b"\xfd7zXZ\x00":
+                            inner_mode = "r:xz"
+                        elif ctrl_data[:3] == b"BZh":
+                            inner_mode = "r:bz2"
+                        else:
+                            inner_mode = "r:"
+                        with tarfile.open(fileobj=io.BytesIO(ctrl_data), mode=inner_mode) as inner:
+                            for m in inner.getmembers():
+                                if m.name.endswith("control"):
+                                    cf = inner.extractfile(m)
+                                    if cf:
+                                        return cf.read().decode("utf-8", "ignore")
+        except Exception as e:
+            print(f"  [!] tar.gz разбор упал: {e}")
 
-                  payload = data[pos:pos+size]
-                  pos += size
-                  if pos % 2 == 1:
-                      pos += 1
-                  result[real_name] = payload
-              return result
+    # === Случай 2: старый .ipk = ar-архив ===
+    if data.startswith(b"!<arch>\n"):
+        pos = 8
+        entries = {}
+        while pos + 60 <= len(data):
+            hdr = data[pos:pos+60]
+            if hdr[58:60] != b"\x60\x0a":
+                break
+            name = hdr[0:16].decode("ascii", "ignore").strip()
+            try:
+                size = int(hdr[48:58].decode("ascii", "ignore").strip())
+            except ValueError:
+                break
+            pos += 60
+            if name.startswith("#1/"):
+                try:
+                    name_len = int(name[3:])
+                except ValueError:
+                    name_len = 0
+                real = data[pos:pos+name_len].decode("ascii", "ignore").strip()
+                pos += name_len
+                size -= name_len
+            else:
+                real = name.rstrip("/")
+            payload = data[pos:pos+size]
+            pos += size
+            if pos % 2: pos += 1
+            entries[real] = payload
 
-          def get_control(ipk_path):
-              with open(ipk_path, "rb") as f:
-                  data = f.read()
-              entries = read_ar(data)
-              for name, payload in entries.items():
-                  if name.startswith("control.tar"):
-                      if payload[:2] == b"\x1f\x8b":
-                          mode = "r:gz"
-                      elif payload[:6] == b"\xfd7zXZ\x00":
-                          mode = "r:xz"
-                      elif payload[:3] == b"BZh":
-                          mode = "r:bz2"
-                      else:
-                          mode = "r:"
-                      try:
-                          with tarfile.open(fileobj=io.BytesIO(payload), mode=mode) as tar:
-                              for m in tar.getmembers():
-                                  if m.name.endswith("/control") or m.name == "control" or m.name == "./control":
-                                      f = tar.extractfile(m)
-                                      if f:
-                                          return f.read().decode("utf-8", "ignore")
-                      except Exception as e:
-                          print(f"  [!] control.tar не открылся: {e}")
-                          continue
-              return ""
+        for name, payload in entries.items():
+            if name.startswith("control.tar"):
+                if payload[:2] == b"\x1f\x8b":
+                    mode = "r:gz"
+                elif payload[:6] == b"\xfd7zXZ\x00":
+                    mode = "r:xz"
+                else:
+                    mode = "r:"
+                try:
+                    with tarfile.open(fileobj=io.BytesIO(payload), mode=mode) as t:
+                        for m in t.getmembers():
+                            if m.name.endswith("control"):
+                                f = t.extractfile(m)
+                                if f:
+                                    return f.read().decode("utf-8", "ignore")
+                except Exception as e:
+                    print(f"  [!] control.tar не открылся: {e}")
 
-          def make_entry(ipk_path):
-              ctrl = get_control(ipk_path)
-              if not ctrl:
-                  print(f"  [!] Пропуск (control не прочитан): {os.path.basename(ipk_path)}")
-                  return None
-              fields = {}
-              current = None
-              for line in ctrl.splitlines():
-                  if line.startswith(" ") and current:
-                      fields[current] += "\n" + line
-                  elif ": " in line:
-                      k, v = line.split(": ", 1)
-                      fields[k] = v
-                      current = k
-              size = os.path.getsize(ipk_path)
-              with open(ipk_path, "rb") as f:
-                  sha = hashlib.sha256(f.read()).hexdigest()
-              name = os.path.basename(ipk_path)
-              lines = [
-                  f"Package: {fields.get('Package','')}",
-                  f"Version: {fields.get('Version','')}",
-                  f"Depends: {fields.get('Depends','')}",
-                  f"Provides: {fields.get('Provides','')}",
-                  "Status: install ok installed",
-                  f"Architecture: {fields.get('Architecture','')}",
-                  "Installed-Size: 0",
-                  f"Filename: {name}",
-                  f"Size: {size}",
-                  f"SHA256sum: {sha}",
-                  f"Description: {fields.get('Description','')}",
-              ]
-              return "\n".join(lines)
+    return ""
 
-          ipks = sorted(glob.glob(os.path.join(OUT_DIR, "*.ipk")))
-          entries = []
-          for ipk in ipks:
-              e = make_entry(ipk)
-              if e:
-                  entries.append(e)
-                  print(f"  [+] {os.path.basename(ipk)}")
 
-          if not entries:
-              print("[!] Ни одной записи — Packages не будет создан")
-              sys.exit(1)
+def make_entry(ipk_path):
+    ctrl = get_control(ipk_path)
+    if not ctrl:
+        print(f"  [!] control не прочитан: {os.path.basename(ipk_path)}")
+        return None
 
-          text = "\n\n".join(entries) + "\n"
-          with open(os.path.join(OUT_DIR, "Packages"), "w", encoding="utf-8") as f:
-              f.write(text)
-          with gzip.open(os.path.join(OUT_DIR, "Packages.gz"), "wb") as f:
-              f.write(text.encode("utf-8"))
+    fields = {}
+    current = None
+    for line in ctrl.splitlines():
+        if line.startswith(" ") and current:
+            fields[current] += "\n" + line
+        elif ": " in line:
+            k, v = line.split(": ", 1)
+            fields[k] = v
+            current = k
 
-          print(f"\n[+] Записано {len(entries)} пакетов в Packages и Packages.gz")
-          PYEOF
+    size = os.path.getsize(ipk_path)
+    with open(ipk_path, "rb") as f:
+        sha = hashlib.sha256(f.read()).hexdigest()
+    name = os.path.basename(ipk_path)
+
+    return "\n".join([
+        f"Package: {fields.get('Package','')}",
+        f"Version: {fields.get('Version','')}",
+        f"Depends: {fields.get('Depends','')}",
+        f"Provides: {fields.get('Provides','')}",
+        "Status: install ok installed",
+        f"Architecture: {fields.get('Architecture','')}",
+        "Installed-Size: 0",
+        f"Filename: {name}",
+        f"Size: {size}",
+        f"SHA256sum: {sha}",
+        f"Description: {fields.get('Description','')}",
+    ])
+
+
+ipks = sorted(glob.glob(os.path.join(OUT_DIR, "*.ipk")))
+entries = []
+for ipk in ipks:
+    e = make_entry(ipk)
+    if e:
+        entries.append(e)
+        print(f"  [+] {os.path.basename(ipk)}")
+
+if not entries:
+    print("[!] Ни одной записи — Packages не будет создан")
+    sys.exit(1)
+
+text = "\n\n".join(entries) + "\n"
+with open(os.path.join(OUT_DIR, "Packages"), "w", encoding="utf-8") as f:
+    f.write(text)
+with gzip.open(os.path.join(OUT_DIR, "Packages.gz"), "wb") as f:
+    f.write(text.encode("utf-8"))
+
+print(f"\n[+] Записано {len(entries)} пакетов в Packages и Packages.gz")
+PYEOF
 
           echo "=== Размер Packages ==="
           wc -c "$OUT_DIR/Packages" || true
@@ -254,17 +279,14 @@ jobs:
           OUT_DIR: ${{ matrix.out_dir }}
         run: |
           set -e
-
           if [ ! -s "$OUT_DIR/Packages" ]; then
             echo "⚠ Packages пуст — не коммитим"
             exit 0
           fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "$OUT_DIR"/*
           git commit -m "auto: rebuild $OUT_DIR packages + index" || echo "Нет изменений"
-
           git pull --rebase origin main || true
           for i in 1 2 3; do
             if git push origin main; then break; fi
