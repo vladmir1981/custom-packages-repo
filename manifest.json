@@ -8,11 +8,25 @@
     {
       "name": "zapret",
       "description": "Обход DPI (Deep Packet Inspection)",
+      "branches": ["23.05", "24.10"],
       "architectures": ["aarch64_cortex-a53", "mipsel_24kc", "mips_24kc"]
     },
     {
       "name": "luci-app-zapret",
-      "description": "LuCI-интерфейс для управления zapret",
+      "description": "LuCI-интерфейс для zapret",
+      "branches": ["23.05", "24.10"],
+      "architectures": ["aarch64_cortex-a53", "mipsel_24kc", "mips_24kc"]
+    },
+    {
+      "name": "zapret2",
+      "description": "Обход DPI — zapret v2 (только 25.12)",
+      "branches": ["25.12"],
+      "architectures": ["aarch64_cortex-a53", "mipsel_24kc", "mips_24kc"]
+    },
+    {
+      "name": "luci-app-zapret2",
+      "description": "LuCI-интерфейс для zapret2",
+      "branches": ["25.12"],
       "architectures": ["aarch64_cortex-a53", "mipsel_24kc", "mips_24kc"]
     }
   ]
