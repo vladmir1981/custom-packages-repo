@@ -26,66 +26,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install apk.static (v3)
+      - name: Download OpenWrt 25.12 SDK (для apk-tools)
         run: |
           set -e
-          cd /tmp
-          URL_BASE="https://dl-cdn.alpinelinux.org/alpine/edge/main/x86_64"
-          FILE=$(wget -qO- "$URL_BASE/" | grep -oE 'apk-tools-static-[^"]+\.apk' | head -1)
-          wget -q "$URL_BASE/$FILE"
-          mkdir -p /tmp/apk_extract
-          tar -xzf "$FILE" -C /tmp/apk_extract
-          APK_BIN=$(find /tmp/apk_extract -name "apk.static" -type f | head -1)
-          chmod +x "$APK_BIN"
-          echo "APK_BIN=$APK_BIN" >> $GITHUB_ENV
+          VER="25.12.5"
+          TGT="mediatek"
+          SUB="filogic"
+          BASE="https://downloads.openwrt.org/releases/${VER}/targets/${TGT}/${SUB}"
+          wget -q "$BASE/sha256sums"
+          SDK=$(grep -oE 'openwrt-sdk-[^ ]*Linux-x86_64\.tar\.zst' sha256sums | head -1)
+          if [ -z "$SDK" ]; then
+            echo "SDK не найден"; head -20 sha256sums; exit 1
+          fi
+          echo "Скачиваем: $SDK"
+          wget -q "$BASE/$SDK"
+          mkdir -p sdk
+          tar --use-compress-program=unzstd -xf "$SDK" -C sdk --strip-components=1
 
-      - name: Diagnose apk
-        run: |
-          echo "=== apk version ==="
+          echo "=== Ищем apk в SDK ==="
+          find sdk -name "apk" -type f 2>/dev/null | head -20
+
+          APK_BIN=$(find sdk/staging_dir -name "apk" -type f 2>/dev/null | head -1)
+          if [ -z "$APK_BIN" ]; then
+            APK_BIN=$(find sdk -name "apk" -type f 2>/dev/null | head -1)
+          fi
+          if [ -z "$APK_BIN" ]; then
+            echo "!!! apk не найден в SDK. Содержимое staging_dir:"
+            ls -la sdk/staging_dir/ 2>/dev/null | head
+            exit 1
+          fi
+          chmod +x "$APK_BIN"
+          APK_BIN=$(realpath "$APK_BIN")
+          echo "APK_BIN=$APK_BIN" >> $GITHUB_ENV
+          echo "=== Найден apk: $APK_BIN ==="
           "$APK_BIN" --version || true
-          echo
-          echo "=== apk index --help ==="
-          "$APK_BIN" index --help 2>&1 | head -60 || true
-          echo
-          echo "=== apk --help ==="
-          "$APK_BIN" --help 2>&1 | head -40 || true
 
       - name: Generate APKINDEX for ${{ matrix.arch }}
         run: |
           set -e
           cd "25.12/${{ matrix.arch }}"
           rm -f APKINDEX.tar.gz
-          echo "=== files ==="
           ls -la
-
-          echo
-          echo "=== TRY 1: index --allow-untrusted -o ... ==="
-          if "$APK_BIN" index --allow-untrusted -o APKINDEX.tar.gz *.apk; then
-            echo "SUCCESS TRY 1"; exit 0
-          fi
-
-          echo
-          echo "=== TRY 2: index --no-verify -o ... ==="
-          if "$APK_BIN" index --no-verify -o APKINDEX.tar.gz *.apk; then
-            echo "SUCCESS TRY 2"; exit 0
-          fi
-
-          echo
-          echo "=== TRY 3: --allow-untrusted index (флаг перед командой) ==="
-          if "$APK_BIN" --allow-untrusted index -o APKINDEX.tar.gz *.apk; then
-            echo "SUCCESS TRY 3"; exit 0
-          fi
-
-          echo
-          echo "=== TRY 4: adbdump -o ... ==="
-          if "$APK_BIN" adbdump -o APKINDEX.tar.gz *.apk 2>/dev/null; then
-            echo "SUCCESS TRY 4"; exit 0
-          fi
-
-          echo
-          echo "=== Все попытки провалились ==="
+          echo "=== Генерация индекса ==="
+          "$APK_BIN" index -o APKINDEX.tar.gz *.apk || {
+            echo "=== Попытка с флагом --allow-untrusted ==="
+            "$APK_BIN" index --allow-untrusted -o APKINDEX.tar.gz *.apk
+          }
           ls -la
-          exit 1
 
       - name: Commit APKINDEX
         if: success()
@@ -97,6 +84,9 @@ jobs:
           git commit -m "auto: APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
           for i in 1 2 3 4 5; do
             git pull --rebase origin main || true
-            if git push origin main; then break; fi
+            if git push origin main; then
+              echo "Push успешен (попытка $i)"
+              break
+            fi
             sleep 5
           done
