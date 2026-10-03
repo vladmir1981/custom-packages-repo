@@ -10,6 +10,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 
+# Зависимости, которые надо УБРАТЬ из Package:
+# они конфликтуют с базовыми пакетами образа (nftables-nojson от firewall4)
+CONFLICTING_DEPS = {"nftables", "nftables-json"}
+
 
 def get_control(ipk_path):
     with open(ipk_path, "rb") as f:
@@ -53,12 +57,17 @@ def make_entry(ipk_path):
     with open(ipk_path, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
 
+    # --- Фильтруем зависимости: убираем конфликтующие nftables/nftables-json ---
+    depends_parts = [p.strip() for p in fields.get("Depends", "").split(",") if p.strip()]
+    depends_parts = [p for p in depends_parts if p not in CONFLICTING_DEPS]
+    depends = ", ".join(depends_parts)
+
     lines = [
         f"Package: {fields.get('Package', '')}",
         f"Version: {fields.get('Version', '')}",
     ]
-    if fields.get("Depends"):
-        lines.append(f"Depends: {fields['Depends']}")
+    if depends:
+        lines.append(f"Depends: {depends}")
     if fields.get("Provides"):
         lines.append(f"Provides: {fields['Provides']}")
     lines += [
@@ -93,7 +102,6 @@ def rebuild_packages(directory: Path):
 
 
 def clean_ipks(directory: Path):
-    """Удаляет все .ipk, Packages, Packages.gz из папки."""
     for pattern in ("*.ipk", "Packages", "Packages.gz"):
         for f in directory.glob(pattern):
             f.unlink()
@@ -105,14 +113,12 @@ def main():
     print("ПОЧИНКА РЕПОЗИТОРИЯ")
     print("=" * 60)
 
-    # Источники свежих файлов
     sources = {
         "aarch64_cortex-a53": ROOT / "24.10" / "aarch64_cortex-a53",
         "mipsel_24kc":        ROOT / "24.10" / "mipsel_24kc",
         "mips_24kc":          ROOT / "24.10" / "mips_24kc",
     }
 
-    # Целевые папки
     targets = [
         ("23.05/aarch64_cortex-a53", "aarch64_cortex-a53"),
         ("23.05/mipsel_24kc",        "mipsel_24kc"),
@@ -122,7 +128,6 @@ def main():
         ("24.10/mips_24kc",          "mips_24kc"),
     ]
 
-    # Шаг 1: для всех папок 23.05 — очистить и скопировать из 24.10
     print("\n--- Шаг 1: чистим папки 23.05 и копируем файлы из 24.10 ---")
     for rel_path, arch in targets:
         if not rel_path.startswith("23.05"):
@@ -139,7 +144,6 @@ def main():
             shutil.copy2(f, target_dir / f.name)
             print(f"      [+] Скопирован {f.name}")
 
-    # Шаг 2: удалить старые .ipk с суффиксом -1_ из всех папок
     print("\n--- Шаг 2: удаляем устаревшие файлы с '_-1_' в имени ---")
     for rel_path, _ in targets:
         target_dir = ROOT / rel_path
@@ -147,7 +151,6 @@ def main():
             f.unlink()
             print(f"      [x] {rel_path}/{f.name}")
 
-    # Шаг 3: пересобрать Packages во всех папках
     print("\n--- Шаг 3: пересобираем Packages во всех папках ---")
     total = 0
     for rel_path, _ in targets:
@@ -160,10 +163,6 @@ def main():
     print("\n" + "=" * 60)
     print(f"ГОТОВО. Всего записей в индексах: {total}")
     print("=" * 60)
-    print("\nДальше в Git Bash:")
-    print("  git add .")
-    print('  git commit -m "fix: пересобраны Packages"')
-    print("  git push")
 
 
 if __name__ == "__main__":
