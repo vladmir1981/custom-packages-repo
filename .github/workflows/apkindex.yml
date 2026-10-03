@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1        # <-- job'ы идут строго по одному
+      max-parallel: 1
       matrix:
         arch:
           - aarch64_cortex-a53
@@ -34,10 +34,29 @@ jobs:
             -w /repo \
             ghcr.io/openwrt/sdk:x86_64 \
             sh -c '
-              echo "=== apk version ==="
-              apk --version
+              echo "=== searching for apk binary ==="
+              APK_BIN=$(find / -type f -name "apk" 2>/dev/null | head -1)
+              APK_STATIC=$(find / -type f -name "apk.static" 2>/dev/null | head -1)
+              echo "apk       : $APK_BIN"
+              echo "apk.static: $APK_STATIC"
+
+              if [ -n "$APK_STATIC" ]; then
+                APK="$APK_STATIC"
+              elif [ -n "$APK_BIN" ]; then
+                APK="$APK_BIN"
+              else
+                echo "=== APK NOT FOUND ANYWHERE — покажу что есть в /builder ==="
+                ls -la /builder 2>/dev/null || true
+                ls -la /builder/staging_dir/host/bin 2>/dev/null | head -30 || true
+                exit 1
+              fi
+
+              echo "=== Using: $APK ==="
+              "$APK" --version || true
+
               echo "=== generating index ==="
-              apk index -o APKINDEX.tar.gz --allow-untrusted *.apk
+              "$APK" index -o APKINDEX.tar.gz --allow-untrusted *.apk
+
               echo "=== result ==="
               ls -la
             '
@@ -50,7 +69,6 @@ jobs:
           git add -f "25.12/${{ matrix.arch }}/APKINDEX.tar.gz"
           git commit -m "auto: rebuild APKINDEX for ${{ matrix.arch }}" || echo "нет изменений"
 
-          # Retry-цикл на случай гонки
           for i in 1 2 3 4 5; do
             git pull --rebase origin main || true
             if git push origin main; then
