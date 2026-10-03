@@ -69,7 +69,7 @@ jobs:
           if [ -z "$IB" ]; then
             echo "SDK не найден"; head -20 sha256sums; exit 1
           fi
-          echo "SDK файл: $IB"
+          echo "SDK: $IB"
           wget -q "$BASE/$IB"
           mkdir -p sdk
           if [[ "$IB" == *.zst ]]; then
@@ -103,14 +103,6 @@ jobs:
           make package/feeds/zapret/luci-app-zapret/compile V=s || \
           echo "FAILED luci-app-zapret"
 
-      - name: Find index script in SDK
-        id: find_idx
-        run: |
-          echo "=== Ищем ipkg-make-index.sh и opkg-make-index ==="
-          find sdk -name "ipkg-make-index.sh" -o -name "opkg-make-index" 2>/dev/null || true
-          ls -la sdk/scripts/ | head -50 || true
-          ls -la sdk/staging_dir/host/bin/ | grep -i index || true
-
       - name: Collect and index zapret packages
         if: always()
         env:
@@ -119,7 +111,6 @@ jobs:
           set -e
           mkdir -p "$OUT_DIR"
 
-          # Копируем .ipk
           find sdk/bin -name "zapret_*.ipk" -type f -exec cp -v {} "$OUT_DIR"/ \;
           find sdk/bin -name "luci-app-zapret_*.ipk" -type f -exec cp -v {} "$OUT_DIR"/ \;
 
@@ -131,41 +122,131 @@ jobs:
             exit 0
           fi
 
-          # Пробуем разные пути к скрипту генерации индекса
-          IDX_SCRIPT=""
-          for candidate in \
-              "sdk/scripts/ipkg-make-index.sh" \
-              "sdk/staging_dir/host/bin/ipkg-make-index.sh" \
-              "sdk/staging_dir/host/bin/opkg-make-index"; do
-            if [ -x "$candidate" ]; then
-              IDX_SCRIPT="$candidate"
-              break
-            fi
-          done
+          python3 << 'PYEOF'
+          import os, sys, hashlib, tarfile, gzip, io, glob
 
-          if [ -z "$IDX_SCRIPT" ]; then
-            echo "❌ Не нашли скрипт индекса. Устанавливаем opkg-tools..."
-            sudo apt install -y opkg-utils || sudo apt install -y ipkg-utils || true
-            IDX_SCRIPT=$(command -v opkg-make-index || command -v ipkg-make-index || true)
-          fi
+          OUT_DIR = os.environ["OUT_DIR"]
 
-          echo "=== Используем индекс-скрипт: $IDX_SCRIPT ==="
+          def read_ar(data):
+              """Читает ar-архив и возвращает {name: payload}."""
+              if not data.startswith(b"!<arch>\n"):
+                  return {}
+              result = {}
+              pos = 8
+              while pos + 60 <= len(data):
+                  hdr = data[pos:pos+60]
+                  if hdr[58:60] != b"\x60\x0a":
+                      break
+                  name = hdr[0:16].decode("ascii", "ignore").strip()
+                  try:
+                      size = int(hdr[48:58].decode("ascii", "ignore").strip())
+                  except ValueError:
+                      break
+                  pos += 60
 
-          if [ -n "$IDX_SCRIPT" ]; then
-            cd "$OUT_DIR"
-            "$GITHUB_WORKSPACE/$IDX_SCRIPT" . > Packages 2>&1 || {
-              echo "⚠ Скрипт упал, пробуем как абсолютный путь"
-              "$IDX_SCRIPT" . > Packages 2>&1 || echo "Ошибка"
-            }
-            cd -
-            gzip -kf "$OUT_DIR/Packages" || true
-            echo "=== Первые строки Packages ==="
-            head -40 "$OUT_DIR/Packages" || echo "(пусто)"
-          else
-            echo "⚠ Не нашли скрипт — попробуем вручную через python"
-          fi
+                  # GNU extended name "#1/N"
+                  if name.startswith("#1/"):
+                      try:
+                          name_len = int(name[3:])
+                      except ValueError:
+                          name_len = 0
+                      real_name = data[pos:pos+name_len].decode("ascii", "ignore").strip()
+                      pos += name_len
+                      size -= name_len
+                  else:
+                      real_name = name.rstrip("/")
 
-          ls -la "$OUT_DIR"
+                  payload = data[pos:pos+size]
+                  pos += size
+                  if pos % 2 == 1:
+                      pos += 1
+                  result[real_name] = payload
+              return result
+
+          def get_control(ipk_path):
+              with open(ipk_path, "rb") as f:
+                  data = f.read()
+              entries = read_ar(data)
+              for name, payload in entries.items():
+                  if name.startswith("control.tar"):
+                      if payload[:2] == b"\x1f\x8b":
+                          mode = "r:gz"
+                      elif payload[:6] == b"\xfd7zXZ\x00":
+                          mode = "r:xz"
+                      elif payload[:3] == b"BZh":
+                          mode = "r:bz2"
+                      else:
+                          mode = "r:"
+                      try:
+                          with tarfile.open(fileobj=io.BytesIO(payload), mode=mode) as tar:
+                              for m in tar.getmembers():
+                                  if m.name.endswith("/control") or m.name == "control" or m.name == "./control":
+                                      f = tar.extractfile(m)
+                                      if f:
+                                          return f.read().decode("utf-8", "ignore")
+                      except Exception as e:
+                          print(f"  [!] control.tar не открылся: {e}")
+                          continue
+              return ""
+
+          def make_entry(ipk_path):
+              ctrl = get_control(ipk_path)
+              if not ctrl:
+                  print(f"  [!] Пропуск (control не прочитан): {os.path.basename(ipk_path)}")
+                  return None
+              fields = {}
+              current = None
+              for line in ctrl.splitlines():
+                  if line.startswith(" ") and current:
+                      fields[current] += "\n" + line
+                  elif ": " in line:
+                      k, v = line.split(": ", 1)
+                      fields[k] = v
+                      current = k
+              size = os.path.getsize(ipk_path)
+              with open(ipk_path, "rb") as f:
+                  sha = hashlib.sha256(f.read()).hexdigest()
+              name = os.path.basename(ipk_path)
+              lines = [
+                  f"Package: {fields.get('Package','')}",
+                  f"Version: {fields.get('Version','')}",
+                  f"Depends: {fields.get('Depends','')}",
+                  f"Provides: {fields.get('Provides','')}",
+                  "Status: install ok installed",
+                  f"Architecture: {fields.get('Architecture','')}",
+                  "Installed-Size: 0",
+                  f"Filename: {name}",
+                  f"Size: {size}",
+                  f"SHA256sum: {sha}",
+                  f"Description: {fields.get('Description','')}",
+              ]
+              return "\n".join(lines)
+
+          ipks = sorted(glob.glob(os.path.join(OUT_DIR, "*.ipk")))
+          entries = []
+          for ipk in ipks:
+              e = make_entry(ipk)
+              if e:
+                  entries.append(e)
+                  print(f"  [+] {os.path.basename(ipk)}")
+
+          if not entries:
+              print("[!] Ни одной записи — Packages не будет создан")
+              sys.exit(1)
+
+          text = "\n\n".join(entries) + "\n"
+          with open(os.path.join(OUT_DIR, "Packages"), "w", encoding="utf-8") as f:
+              f.write(text)
+          with gzip.open(os.path.join(OUT_DIR, "Packages.gz"), "wb") as f:
+              f.write(text.encode("utf-8"))
+
+          print(f"\n[+] Записано {len(entries)} пакетов в Packages и Packages.gz")
+          PYEOF
+
+          echo "=== Размер Packages ==="
+          wc -c "$OUT_DIR/Packages" || true
+          echo "=== Первые 30 строк ==="
+          head -30 "$OUT_DIR/Packages" || true
 
       - name: Publish packages
         if: always()
@@ -173,15 +254,16 @@ jobs:
           OUT_DIR: ${{ matrix.out_dir }}
         run: |
           set -e
-          if [ ! -f "$OUT_DIR/Packages" ] || [ ! -s "$OUT_DIR/Packages" ]; then
-            echo "⚠ Packages пуст — пропускаем публикацию"
+
+          if [ ! -s "$OUT_DIR/Packages" ]; then
+            echo "⚠ Packages пуст — не коммитим"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f "$OUT_DIR"/*
-          git commit -m "auto: rebuild $OUT_DIR packages (with index)" || echo "Нет изменений"
+          git commit -m "auto: rebuild $OUT_DIR packages + index" || echo "Нет изменений"
 
           git pull --rebase origin main || true
           for i in 1 2 3; do
