@@ -1,3 +1,12 @@
+Package: luci-app-zapret2
+Version: 1.0.5.2
+Depends: luci-base, zapret2
+Architecture: all
+Filename: luci-app-zapret2.ipk
+Size: 22130
+SHA256sum: 77679790f605626de4cba8620e74830959ff392b05037a4b2f579de165356e69
+Description: LuCI support for zapret2
+
 Package: luci-app-zapret
 Version: 72.20260307-r1
 Depends: libc, zapret
@@ -7,9 +16,18 @@ Size: 22459
 SHA256sum: dec21cee015c890eddf27a10f1311c623a619f1d2362b1d68c61b71647f5ab0f
 Description:  LuCI support for zapret
 
+Package: zapret2
+Version: 1.0.5.2
+Depends: nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
+Architecture: mipsel_24kc
+Filename: zapret2_mipsel_24kc.ipk
+Size: 610824
+SHA256sum: d4b6d87211ec355c1993de0320af6766844b5a398a3da900a113f5cca6cfae81
+Description: zapret2 (nfqws2) DPI bypass — prebuilt by 1andrevich/zapret2-openwrt
+
 Package: zapret
 Version: 72.20260307-r1
-Depends: libc, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
+Depends: libc, nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue, libnetfilter-queue1, libmnl0, libcap, zlib
 Architecture: mipsel_24kc
 Filename: zapret_72.20260307-r1_mipsel_24kc.ipk
 Size: 178531

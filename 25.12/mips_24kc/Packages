@@ -1,0 +1,17 @@
+Package: luci-app-zapret2
+Version: 1.0.5.2
+Depends: luci-base, zapret2
+Architecture: all
+Filename: luci-app-zapret2.ipk
+Size: 22130
+SHA256sum: 77679790f605626de4cba8620e74830959ff392b05037a4b2f579de165356e69
+Description: LuCI support for zapret2
+
+Package: zapret2
+Version: 1.0.5.2
+Depends: nftables, curl, gzip, coreutils, coreutils-sort, coreutils-sleep, kmod-nft-nat, kmod-nft-offload, kmod-nft-queue
+Architecture: mips_24kc
+Filename: zapret2_mips_24kc.ipk
+Size: 607779
+SHA256sum: 384a1f465e5a953ebbf19abf9cd7fb129f5d42879f67eda719c5ffed3001765b
+Description: zapret2 (nfqws2) DPI bypass — prebuilt by 1andrevich/zapret2-openwrt
